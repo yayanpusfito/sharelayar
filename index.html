@@ -1,0 +1,173 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zoom Class Guru</title>
+
+<style>
+body{
+    margin:0;
+    font-family:Arial;
+    background:#0b1220;
+    color:white;
+    text-align:center;
+}
+
+header{
+    padding:15px;
+    background:#111827;
+    font-size:20px;
+}
+
+.container{
+    padding:20px;
+}
+
+input{
+    padding:10px;
+    border-radius:8px;
+    border:none;
+    width:200px;
+}
+
+button{
+    padding:10px 15px;
+    margin:5px;
+    border:none;
+    border-radius:8px;
+    cursor:pointer;
+    font-weight:bold;
+}
+
+.host{background:#22c55e;color:white;}
+.join{background:#3b82f6;color:white;}
+.screen{background:#f59e0b;color:white;}
+
+video{
+    width:45%;
+    max-width:500px;
+    margin:10px;
+    border-radius:12px;
+    background:black;
+}
+</style>
+</head>
+
+<body>
+
+<header>🎓 Zoom Class - Aplikasi Ngajar Online</header>
+
+<div class="container">
+
+    <input id="room" placeholder="Kode Kelas (contoh: kelas7)">
+
+    <br>
+
+    <button class="host" onclick="startHost()">Saya Guru (Host)</button>
+    <button class="join" onclick="joinClass()">Saya Siswa (Join)</button>
+
+    <div>
+        <video id="localVideo" autoplay muted playsinline></video>
+        <video id="remoteVideo" autoplay playsinline></video>
+    </div>
+
+    <div>
+        <button class="screen" onclick="shareScreen()">Share Layar (Guru)</button>
+    </div>
+
+</div>
+
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
+
+let peer;
+let room;
+let localStream;
+
+function createPeer(){
+    peer = new RTCPeerConnection({
+        iceServers:[{urls:"stun:stun.l.google.com:19302"}]
+    });
+
+    peer.ontrack = e=>{
+        document.getElementById("remoteVideo").srcObject = e.streams[0];
+    };
+
+    peer.onicecandidate = e=>{
+        if(e.candidate){
+            socket.emit("candidate",{room, candidate:e.candidate});
+        }
+    };
+}
+
+// ===== GURU =====
+async function startHost(){
+    room = document.getElementById("room").value;
+    if(!room) return alert("Isi kode kelas!");
+
+    socket.emit("join-room", room);
+    createPeer();
+
+    localStream = await navigator.mediaDevices.getDisplayMedia({
+        video:true,
+        audio:false
+    });
+
+    document.getElementById("localVideo").srcObject = localStream;
+
+    localStream.getTracks().forEach(track=>{
+        peer.addTrack(track, localStream);
+    });
+
+    const offer = await peer.createOffer();
+    await peer.setLocalDescription(offer);
+
+    socket.emit("offer",{room, offer});
+}
+
+// ===== SISWA =====
+function joinClass(){
+    room = document.getElementById("room").value;
+    if(!room) return alert("Isi kode kelas!");
+
+    socket.emit("join-room", room);
+    createPeer();
+}
+
+// ===== SHARE LAYAR ULANG (GURU) =====
+async function shareScreen(){
+    const screen = await navigator.mediaDevices.getDisplayMedia({
+        video:true
+    });
+
+    const track = screen.getVideoTracks()[0];
+    const sender = peer.getSenders().find(s=>s.track.kind==="video");
+
+    if(sender){
+        sender.replaceTrack(track);
+    }
+}
+
+// ===== SIGNALING =====
+socket.on("offer", async offer=>{
+    await peer.setRemoteDescription(new RTCSessionDescription(offer));
+
+    const answer = await peer.createAnswer();
+    await peer.setLocalDescription(answer);
+
+    socket.emit("answer",{room, answer});
+});
+
+socket.on("answer", async answer=>{
+    await peer.setRemoteDescription(new RTCSessionDescription(answer));
+});
+
+socket.on("candidate", async candidate=>{
+    await peer.addIceCandidate(new RTCIceCandidate(candidate));
+});
+</script>
+
+</body>
+</html>
