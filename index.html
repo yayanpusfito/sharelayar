@@ -3,32 +3,29 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Zoom Class Guru</title>
+<title>Kelas Online (Zoom Sederhana)</title>
 
 <style>
 body{
     margin:0;
     font-family:Arial;
-    background:#0b1220;
+    background:#0f172a;
     color:white;
     text-align:center;
 }
 
 header{
+    background:#1e293b;
     padding:15px;
-    background:#111827;
     font-size:20px;
-}
-
-.container{
-    padding:20px;
 }
 
 input{
     padding:10px;
+    width:200px;
     border-radius:8px;
     border:none;
-    width:200px;
+    margin:10px;
 }
 
 button{
@@ -41,13 +38,12 @@ button{
 }
 
 .host{background:#22c55e;color:white;}
-.join{background:#3b82f6;color:white;}
-.screen{background:#f59e0b;color:white;}
+.viewer{background:#3b82f6;color:white;}
 
 video{
-    width:45%;
-    max-width:500px;
-    margin:10px;
+    width:60%;
+    max-width:700px;
+    margin-top:15px;
     border-radius:12px;
     background:black;
 }
@@ -56,25 +52,20 @@ video{
 
 <body>
 
-<header>🎓 Zoom Class - Aplikasi Ngajar Online</header>
+<header>🎓 Kelas Online - Share Layar Guru</header>
 
-<div class="container">
+<div>
 
-    <input id="room" placeholder="Kode Kelas (contoh: kelas7)">
+    <input id="room" placeholder="Kode kelas (contoh: kelas1)">
 
     <br>
 
-    <button class="host" onclick="startHost()">Saya Guru (Host)</button>
-    <button class="join" onclick="joinClass()">Saya Siswa (Join)</button>
+    <button class="host" onclick="startHost()">Guru (Host)</button>
+    <button class="viewer" onclick="startViewer()">Siswa (Viewer)</button>
 
-    <div>
-        <video id="localVideo" autoplay muted playsinline></video>
-        <video id="remoteVideo" autoplay playsinline></video>
-    </div>
+    <br>
 
-    <div>
-        <button class="screen" onclick="shareScreen()">Share Layar (Guru)</button>
-    </div>
+    <video id="video" autoplay playsinline></video>
 
 </div>
 
@@ -82,90 +73,95 @@ video{
 <script>
 const socket = io();
 
-let peer;
+let pc;
+let stream;
 let room;
-let localStream;
 
+// ===== CREATE PEER =====
 function createPeer(){
-    peer = new RTCPeerConnection({
+    pc = new RTCPeerConnection({
         iceServers:[{urls:"stun:stun.l.google.com:19302"}]
     });
 
-    peer.ontrack = e=>{
-        document.getElementById("remoteVideo").srcObject = e.streams[0];
+    pc.ontrack = e=>{
+        document.getElementById("video").srcObject = e.streams[0];
     };
 
-    peer.onicecandidate = e=>{
+    pc.onicecandidate = e=>{
         if(e.candidate){
-            socket.emit("candidate",{room, candidate:e.candidate});
+            socket.emit("candidate",{
+                room,
+                candidate:e.candidate
+            });
         }
     };
 }
 
-// ===== GURU =====
+// ===== HOST (GURU) =====
 async function startHost(){
     room = document.getElementById("room").value;
     if(!room) return alert("Isi kode kelas!");
 
     socket.emit("join-room", room);
+    socket.emit("set-role","host");
+
     createPeer();
 
-    localStream = await navigator.mediaDevices.getDisplayMedia({
+    // SHARE SCREEN
+    stream = await navigator.mediaDevices.getDisplayMedia({
         video:true,
         audio:false
     });
 
-    document.getElementById("localVideo").srcObject = localStream;
+    document.getElementById("video").srcObject = stream;
 
-    localStream.getTracks().forEach(track=>{
-        peer.addTrack(track, localStream);
+    stream.getTracks().forEach(track=>{
+        pc.addTrack(track, stream);
     });
 
-    const offer = await peer.createOffer();
-    await peer.setLocalDescription(offer);
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
 
-    socket.emit("offer",{room, offer});
+    socket.emit("offer",{
+        room,
+        offer
+    });
 }
 
-// ===== SISWA =====
-function joinClass(){
+// ===== VIEWER (SISWA) =====
+function startViewer(){
     room = document.getElementById("room").value;
     if(!room) return alert("Isi kode kelas!");
 
     socket.emit("join-room", room);
+    socket.emit("set-role","viewer");
+
     createPeer();
 }
 
-// ===== SHARE LAYAR ULANG (GURU) =====
-async function shareScreen(){
-    const screen = await navigator.mediaDevices.getDisplayMedia({
-        video:true
+// ===== RECEIVE OFFER =====
+socket.on("offer", async data=>{
+    await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+
+    socket.emit("answer",{
+        room,
+        answer
     });
+});
 
-    const track = screen.getVideoTracks()[0];
-    const sender = peer.getSenders().find(s=>s.track.kind==="video");
+// ===== RECEIVE ANSWER =====
+socket.on("answer", async data=>{
+    await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+});
 
-    if(sender){
-        sender.replaceTrack(track);
+// ===== ICE CANDIDATE =====
+socket.on("candidate", async data=>{
+    if(data.candidate){
+        await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
     }
-}
-
-// ===== SIGNALING =====
-socket.on("offer", async offer=>{
-    await peer.setRemoteDescription(new RTCSessionDescription(offer));
-
-    const answer = await peer.createAnswer();
-    await peer.setLocalDescription(answer);
-
-    socket.emit("answer",{room, answer});
-});
-
-socket.on("answer", async answer=>{
-    await peer.setRemoteDescription(new RTCSessionDescription(answer));
-});
-
-socket.on("candidate", async candidate=>{
-    await peer.addIceCandidate(new RTCIceCandidate(candidate));
 });
 </script>
 
